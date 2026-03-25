@@ -1211,3 +1211,32 @@ select {
   .stats-grid { grid-template-columns: 1fr; }
   .stat-value { font-size: 1.2rem; }
 }
+
+/* ---- NEW ADDITIONS ---- */
+.today-group { border-left: 3px solid var(--primary, #e67e22); }
+.today-badge { background: var(--primary, #e67e22); color: #fff; font-size: 0.7rem; padding: 2px 8px; border-radius: 99px; margin-left: 8px; }
+.itin-notes-text { font-size: 0.78rem; color: var(--text-light); margin-top: 4px; }
+.itin-maps-link { font-size: 0.78rem; color: var(--primary, #e67e22); text-decoration: none; }
+.priority-tag.high, .priority-tag.must { background: #fde8e8; color: #c0392b; }
+.priority-tag.medium, .priority-tag.normal { background: #fef9e7; color: #d35400; }
+.priority-tag.low, .priority-tag.optional { background: #eafaf1; color: #1e8449; }
+.status-tag.done { background: #eafaf1; color: #1e8449; }
+.status-tag.pending { background: #f0f0f0; color: #666; }
+
+.guest-badge { background: #e8f4fd; color: #2980b9; font-size: 0.68rem; padding: 1px 6px; border-radius: 4px; font-weight: 600; }
+
+.pack-category-group { margin-bottom: 16px; }
+.pack-cat-header { display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; font-weight: 600; color: var(--text-light); text-transform: uppercase; letter-spacing: 1px; padding: 4px 0 8px; }
+.pack-cat-count { font-size: 0.72rem; background: var(--bg-card, #f5f5f5); padding: 2px 8px; border-radius: 99px; }
+
+.doc-cat { font-size: 0.72rem; color: var(--text-light); margin-top: 2px; }
+.doc-date { font-size: 0.72rem; color: var(--text-light); }
+.doc-thumb { cursor: pointer; transition: opacity 0.2s; }
+.doc-thumb:hover { opacity: 0.85; }
+
+.lightbox-inner { position: relative; background: var(--bg-card, #fff); border-radius: 12px; padding: 20px; max-width: 90vw; margin: auto; }
+#doc-lightbox { display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.7); }
+
+.total-row { border-top: 1px solid var(--border, #eee); margin-top: 4px; padding-top: 8px; }
+
+.dep-per-member .summary-item { align-items: flex-start; }
