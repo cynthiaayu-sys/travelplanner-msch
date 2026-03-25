@@ -1,5 +1,5 @@
 /* =============================================================
-   WANDR — script.js
+   TRAVELLE — script.js
    Travel Planning App — Firebase + Real-time Collaboration
    ============================================================= */
 
@@ -1269,7 +1269,7 @@ function exportData() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `wandr-${currentTrip.name.replace(/\s+/g, '-')}-${todayISO()}.json`;
+  a.download = `travelle-${currentTrip.name.replace(/\s+/g, '-')}-${todayISO()}.json`;
   a.click();
   URL.revokeObjectURL(url);
   showToast('Data diexport! ✓');
