@@ -655,17 +655,24 @@
     // Expose to global scope
     window._firebase = { auth, db, collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, deleteDoc, onSnapshot, query, where, orderBy, serverTimestamp, arrayUnion, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile };
 
-    // Auth state listener
-    onAuthStateChanged(auth, (user) => {
-      if (user) {
-        window.currentUser = user;
-        showApp(user);
-      } else {
-        window.currentUser = null;
-        showAuth();
-      }
-    });
+    // ✅ Load script.js AFTER _firebase is ready, then start auth listener
+    function startApp() {
+      onAuthStateChanged(auth, (user) => {
+        if (user) {
+          window.currentUser = user;
+          if (typeof showApp === 'function') showApp(user);
+        } else {
+          window.currentUser = null;
+          if (typeof showAuth === 'function') showAuth();
+        }
+      });
+    }
+
+    const script = document.createElement('script');
+    script.src = 'script.js';
+    script.onload = startApp;
+    script.onerror = () => console.error('Gagal memuat script.js');
+    document.body.appendChild(script);
   </script>
-  <script src="script.js"></script>
 </body>
 </html>
