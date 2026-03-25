@@ -1,0 +1,1346 @@
+/* =============================================================
+   WANDR — script.js
+   Travel Planning App — Firebase + Real-time Collaboration
+   ============================================================= */
+
+'use strict';
+
+// ================================================================
+// STATE
+// ================================================================
+let currentUser = null;
+let currentTrip = null;
+let allTrips = [];
+let members = {};       // uid -> {name, email}
+let expenses = [];
+let deposits = [];
+let itinerary = [];
+let packingItems = [];
+let docs = [];
+let notes = [];
+
+// Firestore listeners
+let unsubListeners = [];
+
+// ================================================================
+// HELPERS
+// ================================================================
+const $ = id => document.getElementById(id);
+const fb = () => window._firebase;
+
+function fmt(num) {
+  return 'Rp ' + Math.abs(Number(num) || 0).toLocaleString('id-ID');
+}
+
+function fmtSigned(num) {
+  const n = Number(num) || 0;
+  return (n >= 0 ? '+' : '-') + 'Rp ' + Math.abs(n).toLocaleString('id-ID');
+}
+
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function initials(name) {
+  if (!name) return '?';
+  return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+}
+
+function catIcon(cat) {
+  const icons = { transport: '🚗', makan: '🍜', tiket: '🎟', penginapan: '🏨', belanja: '🛍', lainnya: '📦' };
+  return icons[cat] || '📦';
+}
+
+function showToast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.remove('hidden');
+  t.classList.add('show');
+  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.classList.add('hidden'), 300); }, 2800);
+}
+
+function setLoading(show) {
+  $('loading-overlay').classList.toggle('hidden', !show);
+}
+
+function openModal(id) { $(id).classList.remove('hidden'); }
+function closeModal(id) { $(id).classList.add('hidden'); }
+
+// ================================================================
+// AUTH SCREEN / APP SCREEN
+// ================================================================
+function showAuth() {
+  $('auth-screen').classList.remove('hidden');
+  $('auth-screen').classList.add('active');
+  $('app-screen').classList.add('hidden');
+}
+
+function showApp(user) {
+  currentUser = user;
+  $('auth-screen').classList.add('hidden');
+  $('app-screen').classList.remove('hidden');
+  setupUserUI(user);
+  loadUserTrips();
+}
+
+function setupUserUI(user) {
+  const name = user.displayName || user.email.split('@')[0];
+  const ini = initials(name);
+  $('sidebar-username').textContent = name;
+  $('sidebar-email').textContent = user.email;
+  $('sidebar-avatar').textContent = ini;
+  $('mobile-avatar').textContent = ini;
+}
+
+function toggleAuth(view) {
+  $('login-form').classList.toggle('hidden', view !== 'login');
+  $('register-form').classList.toggle('hidden', view !== 'register');
+  $('login-error').classList.add('hidden');
+  $('register-error').classList.add('hidden');
+}
+
+// ================================================================
+// AUTH ACTIONS
+// ================================================================
+async function loginUser() {
+  const email = $('login-email').value.trim();
+  const pass = $('login-password').value;
+  const errEl = $('login-error');
+  errEl.classList.add('hidden');
+  if (!email || !pass) { showError(errEl, 'Email dan password wajib diisi'); return; }
+  setLoading(true);
+  try {
+    const { auth, signInWithEmailAndPassword } = fb();
+    await signInWithEmailAndPassword(auth, email, pass);
+  } catch (e) {
+    showError(errEl, authErrorMsg(e.code));
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function registerUser() {
+  const name = $('reg-name').value.trim();
+  const email = $('reg-email').value.trim();
+  const pass = $('reg-password').value;
+  const errEl = $('register-error');
+  errEl.classList.add('hidden');
+  if (!name || !email || !pass) { showError(errEl, 'Semua field wajib diisi'); return; }
+  if (pass.length < 6) { showError(errEl, 'Password minimal 6 karakter'); return; }
+  setLoading(true);
+  try {
+    const { auth, db, createUserWithEmailAndPassword, updateProfile, doc, setDoc, serverTimestamp } = fb();
+    const cred = await createUserWithEmailAndPassword(auth, email, pass);
+    await updateProfile(cred.user, { displayName: name });
+    await setDoc(doc(db, 'users', cred.user.uid), {
+      name, email, uid: cred.user.uid, createdAt: serverTimestamp()
+    });
+  } catch (e) {
+    showError(errEl, authErrorMsg(e.code));
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function logoutUser() {
+  unsubListeners.forEach(u => u());
+  unsubListeners = [];
+  currentTrip = null;
+  const { auth, signOut } = fb();
+  await signOut(auth);
+}
+
+function showError(el, msg) {
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+function authErrorMsg(code) {
+  const map = {
+    'auth/invalid-email': 'Format email tidak valid',
+    'auth/user-not-found': 'Akun tidak ditemukan',
+    'auth/wrong-password': 'Password salah',
+    'auth/email-already-in-use': 'Email sudah digunakan',
+    'auth/weak-password': 'Password terlalu lemah',
+    'auth/invalid-credential': 'Email atau password salah',
+    'auth/network-request-failed': 'Periksa koneksi internet kamu'
+  };
+  return map[code] || 'Terjadi kesalahan. Coba lagi.';
+}
+
+// ================================================================
+// NAVIGATION
+// ================================================================
+function switchTab(tab) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  $(`tab-${tab}`).classList.add('active');
+  document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+  closeSidebar();
+  // Trigger re-render for active tab
+  if (tab === 'expenses') renderExpenses();
+  if (tab === 'deposits') renderDeposits();
+  if (tab === 'dashboard') renderDashboard();
+}
+
+function toggleSidebar() {
+  $('sidebar').classList.toggle('open');
+  $('sidebar-overlay').classList.toggle('active');
+}
+
+function closeSidebar() {
+  $('sidebar').classList.remove('open');
+  $('sidebar-overlay').classList.remove('active');
+}
+
+// ================================================================
+// TRIP MANAGEMENT
+// ================================================================
+function openTripModal() {
+  openModal('trip-modal');
+  switchTripTab('my-trips');
+  renderMyTrips();
+}
+
+function switchTripTab(tab) {
+  ['my-trips', 'create', 'join'].forEach(t => {
+    const el = $(`trip-tab-${t}`);
+    if (el) el.classList.toggle('hidden', t !== tab);
+  });
+  document.querySelectorAll('.tab-pills .pill').forEach((p, i) => {
+    p.classList.toggle('active', ['my-trips', 'create', 'join'][i] === tab);
+  });
+}
+
+function showCreateTrip() { openTripModal(); switchTripTab('create'); }
+function showJoinTrip() { openTripModal(); switchTripTab('join'); }
+
+async function loadUserTrips() {
+  if (!currentUser) return;
+  const { db, collection, query, where, onSnapshot } = fb();
+  const q = query(collection(db, 'trips'), where('members', 'array-contains', currentUser.uid));
+  const unsub = onSnapshot(q, snap => {
+    allTrips = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (allTrips.length > 0 && !currentTrip) {
+      // auto-select first trip
+      selectTrip(allTrips[0]);
+    }
+    renderMyTrips();
+  });
+  unsubListeners.push(unsub);
+}
+
+function renderMyTrips() {
+  const el = $('my-trips-list');
+  if (!el) return;
+  if (allTrips.length === 0) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">✈</div>Belum ada trip. Buat atau join trip!</div>';
+    return;
+  }
+  el.innerHTML = allTrips.map(t => `
+    <div class="trip-card ${currentTrip && currentTrip.id === t.id ? 'active-trip' : ''}" onclick="selectTrip(${JSON.stringify({id: t.id, name: t.name, dest: t.dest, start: t.start, end: t.end, owner: t.owner, members: t.members}).replace(/"/g, '&quot;')})">
+      <div class="trip-card-name">${t.name}</div>
+      <div class="trip-card-dest">📍 ${t.dest || ''}</div>
+      <div class="trip-card-dates">${t.start || ''} — ${t.end || ''}</div>
+      ${currentTrip && currentTrip.id === t.id ? '<span class="trip-card-badge">Aktif</span>' : ''}
+    </div>
+  `).join('');
+}
+
+async function createTrip() {
+  const name = $('new-trip-name').value.trim();
+  const dest = $('new-trip-dest').value.trim();
+  const start = $('new-trip-start').value;
+  const end = $('new-trip-end').value;
+  if (!name) { showToast('Nama trip wajib diisi'); return; }
+  setLoading(true);
+  try {
+    const { db, collection, addDoc, serverTimestamp } = fb();
+    const tripRef = await addDoc(collection(db, 'trips'), {
+      name, dest, start, end,
+      owner: currentUser.uid,
+      members: [currentUser.uid],
+      createdAt: serverTimestamp()
+    });
+    // save member info
+    await saveMemberInfo(tripRef.id, currentUser);
+    showToast('Trip berhasil dibuat! 🎉');
+    closeModal('trip-modal');
+    $('new-trip-name').value = '';
+    $('new-trip-dest').value = '';
+    $('new-trip-start').value = '';
+    $('new-trip-end').value = '';
+  } catch (e) {
+    showToast('Gagal membuat trip: ' + e.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function joinTrip() {
+  const tripId = $('join-trip-id').value.trim();
+  if (!tripId) { showToast('Masukkan Trip ID'); return; }
+  setLoading(true);
+  try {
+    const { db, doc, getDoc, updateDoc, arrayUnion } = fb();
+    const tripRef = doc(db, 'trips', tripId);
+    const tripSnap = await getDoc(tripRef);
+    if (!tripSnap.exists()) { showToast('Trip tidak ditemukan'); return; }
+    const trip = tripSnap.data();
+    if (trip.members.includes(currentUser.uid)) { showToast('Kamu sudah jadi anggota trip ini'); return; }
+    await updateDoc(tripRef, { members: arrayUnion(currentUser.uid) });
+    await saveMemberInfo(tripId, currentUser);
+    showToast('Berhasil bergabung! 🎊');
+    closeModal('trip-modal');
+    $('join-trip-id').value = '';
+  } catch (e) {
+    showToast('Gagal join trip: ' + e.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function saveMemberInfo(tripId, user) {
+  const { db, doc, setDoc } = fb();
+  await setDoc(doc(db, 'trips', tripId, 'members', user.uid), {
+    uid: user.uid,
+    name: user.displayName || user.email.split('@')[0],
+    email: user.email
+  });
+}
+
+function selectTrip(trip) {
+  // Unsubscribe old listeners (except the trips one)
+  unsubListeners.slice(1).forEach(u => u());
+  unsubListeners = unsubListeners.slice(0, 1);
+
+  currentTrip = trip;
+  $('current-trip-name').textContent = trip.name;
+  $('trip-id-text').textContent = trip.id;
+
+  // Show dashboard content
+  $('no-trip-banner').classList.add('hidden');
+  $('dashboard-content').classList.remove('hidden');
+
+  closeModal('trip-modal');
+
+  // Subscribe to all subcollections
+  subscribeMembers();
+  subscribeExpenses();
+  subscribeDeposits();
+  subscribeItinerary();
+  subscribePacking();
+  subscribeDocs();
+  subscribeNotes();
+
+  renderMyTrips();
+}
+
+function copyTripId() {
+  if (!currentTrip) return;
+  navigator.clipboard.writeText(currentTrip.id).then(() => showToast('Trip ID disalin! 📋'));
+}
+
+// ================================================================
+// REAL-TIME SUBSCRIPTIONS
+// ================================================================
+function subscribeMembers() {
+  const { db, collection, onSnapshot } = fb();
+  const unsub = onSnapshot(collection(db, 'trips', currentTrip.id, 'members'), snap => {
+    members = {};
+    snap.docs.forEach(d => { members[d.id] = d.data(); });
+    renderDashboard();
+    populateMemberSelects();
+  });
+  unsubListeners.push(unsub);
+}
+
+function subscribeExpenses() {
+  const { db, collection, query, orderBy, onSnapshot } = fb();
+  const q = query(collection(db, 'trips', currentTrip.id, 'expenses'), orderBy('date', 'desc'));
+  const unsub = onSnapshot(q, snap => {
+    expenses = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderExpenses();
+    renderDashboard();
+  });
+  unsubListeners.push(unsub);
+}
+
+function subscribeDeposits() {
+  const { db, collection, query, orderBy, onSnapshot } = fb();
+  const q = query(collection(db, 'trips', currentTrip.id, 'deposits'), orderBy('date', 'desc'));
+  const unsub = onSnapshot(q, snap => {
+    deposits = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderDeposits();
+    renderDashboard();
+  });
+  unsubListeners.push(unsub);
+}
+
+function subscribeItinerary() {
+  const { db, collection, query, orderBy, onSnapshot } = fb();
+  const q = query(collection(db, 'trips', currentTrip.id, 'itinerary'), orderBy('day', 'asc'));
+  const unsub = onSnapshot(q, snap => {
+    itinerary = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderItinerary();
+    renderDashboard();
+  });
+  unsubListeners.push(unsub);
+}
+
+function subscribePacking() {
+  const { db, collection, query, orderBy, onSnapshot } = fb();
+  const q = query(collection(db, 'trips', currentTrip.id, 'packing'), orderBy('createdAt', 'asc'));
+  const unsub = onSnapshot(q, snap => {
+    packingItems = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderPacking();
+  });
+  unsubListeners.push(unsub);
+}
+
+function subscribeDocs() {
+  const { db, collection, query, orderBy, onSnapshot } = fb();
+  const q = query(collection(db, 'trips', currentTrip.id, 'documentation'), orderBy('createdAt', 'desc'));
+  const unsub = onSnapshot(q, snap => {
+    docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderDocs();
+  });
+  unsubListeners.push(unsub);
+}
+
+function subscribeNotes() {
+  const { db, collection, query, orderBy, onSnapshot } = fb();
+  const q = query(collection(db, 'trips', currentTrip.id, 'notes'), orderBy('createdAt', 'desc'));
+  const unsub = onSnapshot(q, snap => {
+    notes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderNotes();
+  });
+  unsubListeners.push(unsub);
+}
+
+// ================================================================
+// POPULATE MEMBER SELECTS
+// ================================================================
+function populateMemberSelects() {
+  const memberOptions = Object.values(members).map(m => `<option value="${m.uid}">${m.name}</option>`).join('');
+
+  // Expense payer
+  const expPayer = $('exp-payer');
+  if (expPayer) expPayer.innerHTML = memberOptions;
+
+  // Deposit member
+  const depMember = $('dep-member');
+  if (depMember) depMember.innerHTML = memberOptions;
+
+  // Packing assignee
+  const packAssignee = $('pack-assignee');
+  if (packAssignee) {
+    packAssignee.innerHTML = '<option value="">Siapa saja</option>' + memberOptions;
+  }
+
+  // Expense for-whom checkboxes
+  const forWhomEl = $('exp-for-whom');
+  if (forWhomEl) {
+    forWhomEl.innerHTML = Object.values(members).map(m => `
+      <label class="checkbox-item">
+        <input type="checkbox" value="${m.uid}" class="for-whom-check" />
+        ${m.name}
+      </label>
+    `).join('');
+  }
+
+  // Filter payer select
+  const filterPayer = $('filter-payer');
+  if (filterPayer) {
+    filterPayer.innerHTML = '<option value="">Semua pembayar</option>' + memberOptions;
+  }
+}
+
+// ================================================================
+// DASHBOARD
+// ================================================================
+function renderDashboard() {
+  if (!currentTrip) return;
+
+  // Total expense
+  const totalExp = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+  $('stat-total-expense').textContent = fmt(totalExp);
+  $('stat-expense-count').textContent = expenses.length + ' transaksi';
+
+  // Total deposit
+  const totalDep = deposits.reduce((s, d) => s + (d.amount || 0), 0);
+  $('stat-total-deposit').textContent = fmt(totalDep);
+  $('stat-deposit-count').textContent = Object.keys(members).length + ' anggota';
+
+  // Balance
+  const balance = totalDep - totalExp;
+  const balEl = $('stat-balance');
+  balEl.textContent = fmt(balance);
+  balEl.style.color = balance >= 0 ? 'var(--success)' : 'var(--danger)';
+  $('stat-balance-info').textContent = balance >= 0 ? 'Masih ada sisa' : 'Melebihi kas';
+
+  // Itinerary progress
+  const done = itinerary.filter(i => i.status === 'done').length;
+  const total = itinerary.length;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  $('stat-itinerary-pct').textContent = pct + '%';
+  $('itinerary-progress-bar').style.width = pct + '%';
+
+  // Members + balance
+  renderMemberBalances();
+
+  // Settlement
+  renderSettlement();
+
+  // Recent expenses
+  renderRecentExpenses();
+}
+
+function getMemberExpensePaid() {
+  // How much each member has PAID
+  const paid = {};
+  Object.keys(members).forEach(uid => paid[uid] = 0);
+  expenses.forEach(exp => {
+    if (exp.payer) paid[exp.payer] = (paid[exp.payer] || 0) + (exp.amount || 0);
+  });
+  return paid;
+}
+
+function getMemberExpenseShare() {
+  // How much each member OWES (their share)
+  const share = {};
+  Object.keys(members).forEach(uid => share[uid] = 0);
+  expenses.forEach(exp => {
+    let forWhom = exp.forWhom || Object.keys(members);
+    if (!Array.isArray(forWhom) || forWhom.length === 0) forWhom = Object.keys(members);
+    const perPerson = (exp.amount || 0) / forWhom.length;
+    forWhom.forEach(uid => {
+      share[uid] = (share[uid] || 0) + perPerson;
+    });
+  });
+  return share;
+}
+
+function getMemberDeposits() {
+  const dep = {};
+  Object.keys(members).forEach(uid => dep[uid] = 0);
+  deposits.forEach(d => {
+    if (d.member) dep[d.member] = (dep[d.member] || 0) + (d.amount || 0);
+  });
+  return dep;
+}
+
+function renderMemberBalances() {
+  const el = $('members-list');
+  if (!el) return;
+  const paid = getMemberExpensePaid();
+  const share = getMemberExpenseShare();
+  const dep = getMemberDeposits();
+
+  if (Object.keys(members).length === 0) {
+    el.innerHTML = '<div class="empty-state">Belum ada anggota</div>';
+    return;
+  }
+
+  el.innerHTML = Object.values(members).map(m => {
+    // net = paid - share (positive = orang ini bayar lebih dari bagiannya)
+    const net = (paid[m.uid] || 0) - (share[m.uid] || 0);
+    return `
+      <div class="member-item">
+        <div class="member-avatar">${initials(m.name)}</div>
+        <div class="member-info">
+          <div class="member-name">${m.name}</div>
+          <div style="font-size:0.75rem;color:var(--text-light)">Bayar: ${fmt(paid[m.uid] || 0)} | Share: ${fmt(share[m.uid] || 0)}</div>
+        </div>
+        <div class="member-balance ${net >= 0 ? 'positive' : 'negative'}">
+          ${fmtSigned(net)}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderSettlement() {
+  const el = $('settlement-list');
+  if (!el) return;
+  const paid = getMemberExpensePaid();
+  const share = getMemberExpenseShare();
+
+  // net[uid] = paid - share, positive = they are owed money, negative = they owe money
+  const net = {};
+  Object.keys(members).forEach(uid => {
+    net[uid] = (paid[uid] || 0) - (share[uid] || 0);
+  });
+
+  const settlements = computeSettlements(net);
+
+  if (settlements.length === 0) {
+    el.innerHTML = '<div class="empty-state">✅ Semua sudah seimbang!</div>';
+    return;
+  }
+
+  el.innerHTML = settlements.map(s => `
+    <div class="settlement-item">
+      <div class="member-avatar" style="width:30px;height:30px;font-size:0.7rem">${initials(members[s.from]?.name || '?')}</div>
+      <span style="font-weight:500">${members[s.from]?.name || s.from}</span>
+      <span class="settlement-arrow">→</span>
+      <div class="member-avatar" style="width:30px;height:30px;font-size:0.7rem;background:var(--sage)">${initials(members[s.to]?.name || '?')}</div>
+      <span style="font-weight:500">${members[s.to]?.name || s.to}</span>
+      <span class="settlement-amount">${fmt(s.amount)}</span>
+    </div>
+  `).join('');
+}
+
+function computeSettlements(net) {
+  // Greedy settlement algorithm
+  const debtors = [];
+  const creditors = [];
+  Object.entries(net).forEach(([uid, n]) => {
+    if (n < -0.01) debtors.push({ uid, amount: -n });
+    else if (n > 0.01) creditors.push({ uid, amount: n });
+  });
+
+  const result = [];
+  let i = 0, j = 0;
+  while (i < debtors.length && j < creditors.length) {
+    const d = debtors[i];
+    const c = creditors[j];
+    const amount = Math.min(d.amount, c.amount);
+    if (amount > 0.01) {
+      result.push({ from: d.uid, to: c.uid, amount: Math.round(amount) });
+    }
+    d.amount -= amount;
+    c.amount -= amount;
+    if (d.amount < 0.01) i++;
+    if (c.amount < 0.01) j++;
+  }
+  return result;
+}
+
+function renderRecentExpenses() {
+  const el = $('recent-expenses');
+  if (!el) return;
+  const recent = expenses.slice(0, 5);
+  if (recent.length === 0) {
+    el.innerHTML = '<div class="empty-state">Belum ada pengeluaran</div>';
+    return;
+  }
+  el.innerHTML = recent.map(e => `
+    <div class="recent-item">
+      <div class="recent-item-icon">${catIcon(e.category)}</div>
+      <div class="recent-item-info">
+        <div class="recent-item-desc">${e.description || '-'}</div>
+        <div class="recent-item-meta">${e.date || ''} • ${members[e.payer]?.name || '?'}</div>
+      </div>
+      <div class="recent-item-amount">${fmt(e.amount)}</div>
+    </div>
+  `).join('');
+}
+
+// ================================================================
+// ITINERARY
+// ================================================================
+function openItineraryModal(editId = null) {
+  $('itinerary-edit-id').value = editId || '';
+  $('itinerary-modal-title').textContent = editId ? 'Edit Aktivitas' : 'Tambah Aktivitas';
+  if (editId) {
+    const item = itinerary.find(i => i.id === editId);
+    if (item) {
+      $('itin-day').value = item.day || '';
+      $('itin-date').value = item.date || '';
+      $('itin-time-start').value = item.timeStart || '';
+      $('itin-time-end').value = item.timeEnd || '';
+      $('itin-activity').value = item.activity || '';
+      $('itin-location').value = item.location || '';
+      $('itin-maps').value = item.mapsUrl || '';
+      $('itin-priority').value = item.priority || 'normal';
+      $('itin-status').value = item.status || 'pending';
+      $('itin-notes').value = item.notes || '';
+    }
+  } else {
+    ['itin-day','itin-date','itin-time-start','itin-time-end','itin-activity','itin-location','itin-maps','itin-notes'].forEach(id => $(id).value = '');
+    $('itin-priority').value = 'normal';
+    $('itin-status').value = 'pending';
+  }
+  if (!currentTrip) { showToast('Pilih trip dulu'); return; }
+  openModal('itinerary-modal');
+}
+
+async function saveItinerary() {
+  if (!currentTrip) return;
+  const editId = $('itinerary-edit-id').value;
+  const data = {
+    day: parseInt($('itin-day').value) || 1,
+    date: $('itin-date').value,
+    timeStart: $('itin-time-start').value,
+    timeEnd: $('itin-time-end').value,
+    activity: $('itin-activity').value.trim(),
+    location: $('itin-location').value.trim(),
+    mapsUrl: $('itin-maps').value.trim(),
+    priority: $('itin-priority').value,
+    status: $('itin-status').value,
+    notes: $('itin-notes').value.trim(),
+    updatedBy: currentUser.uid,
+    updatedAt: new Date().toISOString()
+  };
+  if (!data.activity) { showToast('Nama aktivitas wajib diisi'); return; }
+  setLoading(true);
+  try {
+    const { db, doc, addDoc, updateDoc, collection, serverTimestamp } = fb();
+    if (editId) {
+      await updateDoc(doc(db, 'trips', currentTrip.id, 'itinerary', editId), data);
+    } else {
+      data.createdBy = currentUser.uid;
+      data.createdAt = serverTimestamp();
+      await addDoc(collection(db, 'trips', currentTrip.id, 'itinerary'), data);
+    }
+    showToast('Aktivitas disimpan ✓');
+    closeModal('itinerary-modal');
+  } catch (e) {
+    showToast('Gagal menyimpan: ' + e.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function toggleItineraryStatus(id, current) {
+  if (!currentTrip) return;
+  const { db, doc, updateDoc } = fb();
+  await updateDoc(doc(db, 'trips', currentTrip.id, 'itinerary', id), {
+    status: current === 'done' ? 'pending' : 'done'
+  });
+}
+
+async function deleteItinerary(id) {
+  if (!confirm('Hapus aktivitas ini?')) return;
+  const { db, doc, deleteDoc } = fb();
+  await deleteDoc(doc(db, 'trips', currentTrip.id, 'itinerary', id));
+  showToast('Aktivitas dihapus');
+}
+
+function renderItinerary() {
+  const el = $('itinerary-list');
+  if (!el) return;
+  if (itinerary.length === 0) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">◷</div>Belum ada aktivitas. Tambah itinerary pertama kamu!</div>';
+    return;
+  }
+  // Group by day
+  const grouped = {};
+  itinerary.forEach(item => {
+    const key = `Hari ${item.day}${item.date ? ' — ' + item.date : ''}`;
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(item);
+  });
+  // Sort by time within each group
+  Object.values(grouped).forEach(arr => arr.sort((a, b) => (a.timeStart || '').localeCompare(b.timeStart || '')));
+
+  el.innerHTML = Object.entries(grouped).map(([dayLabel, items]) => `
+    <div class="itin-day-group">
+      <div class="itin-day-label">${dayLabel}</div>
+      ${items.map(item => `
+        <div class="itin-item ${item.status === 'done' ? 'done' : ''}">
+          <div>
+            <button class="status-toggle ${item.status === 'done' ? 'done' : ''}" onclick="toggleItineraryStatus('${item.id}','${item.status}')">
+              ${item.status === 'done' ? '✓' : ''}
+            </button>
+          </div>
+          <div class="itin-time">
+            ${item.timeStart || ''} ${item.timeEnd ? '— ' + item.timeEnd : ''}
+          </div>
+          <div class="itin-body">
+            <div class="itin-activity">${item.activity}</div>
+            ${item.location ? `<div class="itin-location">📍 ${item.location}</div>` : ''}
+            ${item.mapsUrl ? `<a class="itin-maps-link" href="${item.mapsUrl}" target="_blank">Lihat Maps →</a>` : ''}
+            <div class="itin-tags">
+              <span class="tag ${item.priority}">${item.priority === 'must' ? '⭐ Must Do' : item.priority === 'optional' ? 'Optional' : 'Normal'}</span>
+              <span class="tag ${item.status}">${item.status === 'done' ? '✓ Selesai' : 'Belum'}</span>
+            </div>
+          </div>
+          <div class="itin-actions">
+            <button class="btn-icon" onclick="openItineraryModal('${item.id}')">✏</button>
+            <button class="btn-icon danger" onclick="deleteItinerary('${item.id}')">✕</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+}
+
+// ================================================================
+// EXPENSES
+// ================================================================
+function openExpenseModal(editId = null) {
+  if (!currentTrip) { showToast('Pilih trip dulu'); return; }
+  populateMemberSelects();
+  $('expense-edit-id').value = editId || '';
+  $('expense-modal-title').textContent = editId ? 'Edit Pengeluaran' : 'Tambah Pengeluaran';
+  if (editId) {
+    const item = expenses.find(e => e.id === editId);
+    if (item) {
+      $('exp-date').value = item.date || '';
+      $('exp-category').value = item.category || 'lainnya';
+      $('exp-desc').value = item.description || '';
+      $('exp-amount').value = item.amount || '';
+      $('exp-payer').value = item.payer || '';
+      // set for-whom
+      setTimeout(() => {
+        const forAll = !item.forWhom || item.forWhom.length === Object.keys(members).length;
+        $('exp-for-all').checked = forAll;
+        toggleForAll();
+        if (!forAll && item.forWhom) {
+          document.querySelectorAll('.for-whom-check').forEach(cb => {
+            cb.checked = item.forWhom.includes(cb.value);
+          });
+        }
+      }, 100);
+    }
+  } else {
+    $('exp-date').value = todayISO();
+    $('exp-desc').value = '';
+    $('exp-amount').value = '';
+    $('exp-for-all').checked = true;
+    toggleForAll();
+  }
+  openModal('expense-modal');
+}
+
+function toggleForAll() {
+  const forAll = $('exp-for-all').checked;
+  document.querySelectorAll('.for-whom-check').forEach(cb => {
+    cb.disabled = forAll;
+    cb.checked = forAll;
+  });
+}
+
+async function saveExpense() {
+  if (!currentTrip) return;
+  const editId = $('expense-edit-id').value;
+  const forAll = $('exp-for-all').checked;
+  let forWhom;
+  if (forAll) {
+    forWhom = Object.keys(members);
+  } else {
+    forWhom = Array.from(document.querySelectorAll('.for-whom-check:checked')).map(cb => cb.value);
+  }
+  const data = {
+    date: $('exp-date').value,
+    category: $('exp-category').value,
+    description: $('exp-desc').value.trim(),
+    amount: parseFloat($('exp-amount').value) || 0,
+    payer: $('exp-payer').value,
+    forWhom,
+    updatedBy: currentUser.uid,
+    updatedAt: new Date().toISOString()
+  };
+  if (!data.description) { showToast('Deskripsi wajib diisi'); return; }
+  if (!data.amount) { showToast('Nominal wajib diisi'); return; }
+  if (!data.payer) { showToast('Pilih pembayar'); return; }
+  setLoading(true);
+  try {
+    const { db, doc, addDoc, updateDoc, collection, serverTimestamp } = fb();
+    if (editId) {
+      await updateDoc(doc(db, 'trips', currentTrip.id, 'expenses', editId), data);
+    } else {
+      data.createdBy = currentUser.uid;
+      data.createdAt = serverTimestamp();
+      await addDoc(collection(db, 'trips', currentTrip.id, 'expenses'), data);
+    }
+    showToast('Pengeluaran disimpan ✓');
+    closeModal('expense-modal');
+  } catch (e) {
+    showToast('Gagal: ' + e.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function deleteExpense(id) {
+  if (!confirm('Hapus pengeluaran ini?')) return;
+  const { db, doc, deleteDoc } = fb();
+  await deleteDoc(doc(db, 'trips', currentTrip.id, 'expenses', id));
+  showToast('Dihapus');
+}
+
+function renderExpenses() {
+  const filterPayer = $('filter-payer')?.value || '';
+  const filterCat = $('filter-category')?.value || '';
+
+  let filtered = expenses;
+  if (filterPayer) filtered = filtered.filter(e => e.payer === filterPayer);
+  if (filterCat) filtered = filtered.filter(e => e.category === filterCat);
+
+  // Summary per person
+  const perPerson = {};
+  Object.values(members).forEach(m => perPerson[m.name] = 0);
+  expenses.forEach(e => {
+    const name = members[e.payer]?.name || '?';
+    perPerson[name] = (perPerson[name] || 0) + (e.amount || 0);
+  });
+  $('expense-summary-person').innerHTML = Object.entries(perPerson).map(([name, val]) => `
+    <div class="summary-item">
+      <div class="summary-item-label">${name}</div>
+      <div class="summary-item-value">${fmt(val)}</div>
+    </div>
+  `).join('') || '<div class="empty-state">Belum ada data</div>';
+
+  // Summary per category
+  const perCat = {};
+  expenses.forEach(e => {
+    perCat[e.category] = (perCat[e.category] || 0) + (e.amount || 0);
+  });
+  $('expense-summary-category').innerHTML = Object.entries(perCat).map(([cat, val]) => `
+    <div class="summary-item">
+      <div class="summary-item-label">${catIcon(cat)} ${cat}</div>
+      <div class="summary-item-value">${fmt(val)}</div>
+    </div>
+  `).join('') || '<div class="empty-state">Belum ada data</div>';
+
+  // Expense list
+  const el = $('expenses-list');
+  if (!el) return;
+  if (filtered.length === 0) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">◎</div>Belum ada pengeluaran</div>';
+    return;
+  }
+  el.innerHTML = filtered.map(e => `
+    <div class="expense-item">
+      <div class="exp-cat-icon cat-${e.category}">${catIcon(e.category)}</div>
+      <div class="exp-body">
+        <div class="exp-desc">${e.description || '-'}</div>
+        <div class="exp-meta">${e.date || ''} • ${e.category}</div>
+      </div>
+      <div class="exp-right">
+        <div class="exp-amount">${fmt(e.amount)}</div>
+        <div class="exp-payer">oleh ${members[e.payer]?.name || '?'}</div>
+      </div>
+      <div class="exp-actions">
+        <button class="btn-icon" onclick="openExpenseModal('${e.id}')">✏</button>
+        <button class="btn-icon danger" onclick="deleteExpense('${e.id}')">✕</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ================================================================
+// DEPOSITS
+// ================================================================
+function openDepositModal() {
+  if (!currentTrip) { showToast('Pilih trip dulu'); return; }
+  populateMemberSelects();
+  $('deposit-edit-id').value = '';
+  $('dep-amount').value = '';
+  $('dep-date').value = todayISO();
+  $('dep-note').value = '';
+  openModal('deposit-modal');
+}
+
+async function saveDeposit() {
+  if (!currentTrip) return;
+  const data = {
+    member: $('dep-member').value,
+    amount: parseFloat($('dep-amount').value) || 0,
+    date: $('dep-date').value,
+    note: $('dep-note').value.trim(),
+    createdBy: currentUser.uid,
+    createdAt: new Date().toISOString()
+  };
+  if (!data.member) { showToast('Pilih anggota'); return; }
+  if (!data.amount) { showToast('Nominal wajib diisi'); return; }
+  setLoading(true);
+  try {
+    const { db, collection, addDoc, serverTimestamp } = fb();
+    await addDoc(collection(db, 'trips', currentTrip.id, 'deposits'), {
+      ...data, createdAt: serverTimestamp()
+    });
+    showToast('Deposit dicatat ✓');
+    closeModal('deposit-modal');
+  } catch (e) {
+    showToast('Gagal: ' + e.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function deleteDeposit(id) {
+  if (!confirm('Hapus deposit ini?')) return;
+  const { db, doc, deleteDoc } = fb();
+  await deleteDoc(doc(db, 'trips', currentTrip.id, 'deposits', id));
+  showToast('Dihapus');
+}
+
+function renderDeposits() {
+  // Stats
+  const totalDep = deposits.reduce((s, d) => s + (d.amount || 0), 0);
+  const totalExp = expenses.reduce((s, e) => s + (e.amount || 0), 0);
+  const remain = totalDep - totalExp;
+  $('dep-total').textContent = fmt(totalDep);
+  $('dep-used').textContent = fmt(totalExp);
+  $('dep-remain').textContent = fmt(remain);
+  $('dep-remain').style.color = remain >= 0 ? 'var(--success)' : 'var(--danger)';
+
+  const el = $('deposit-list');
+  if (!el) return;
+  if (deposits.length === 0) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">◉</div>Belum ada deposit</div>';
+    return;
+  }
+  el.innerHTML = deposits.map(d => `
+    <div class="deposit-item">
+      <div class="member-avatar">${initials(members[d.member]?.name || '?')}</div>
+      <div class="dep-info">
+        <div class="dep-name">${members[d.member]?.name || '?'}</div>
+        <div class="dep-note">${d.note || ''} ${d.date ? '• ' + d.date : ''}</div>
+      </div>
+      <div class="dep-amount">${fmt(d.amount)}</div>
+      <button class="btn-icon danger" onclick="deleteDeposit('${d.id}')">✕</button>
+    </div>
+  `).join('');
+}
+
+// ================================================================
+// PACKING
+// ================================================================
+function openPackingModal() {
+  if (!currentTrip) { showToast('Pilih trip dulu'); return; }
+  populateMemberSelects();
+  $('pack-item').value = '';
+  $('pack-category').value = 'pakaian';
+  openModal('packing-modal');
+}
+
+async function savePacking() {
+  if (!currentTrip) return;
+  const item = $('pack-item').value.trim();
+  if (!item) { showToast('Nama item wajib diisi'); return; }
+  const data = {
+    item,
+    category: $('pack-category').value,
+    assignee: $('pack-assignee').value || '',
+    packed: false,
+    createdBy: currentUser.uid
+  };
+  setLoading(true);
+  try {
+    const { db, collection, addDoc, serverTimestamp } = fb();
+    await addDoc(collection(db, 'trips', currentTrip.id, 'packing'), {
+      ...data, createdAt: serverTimestamp()
+    });
+    showToast('Item ditambahkan ✓');
+    closeModal('packing-modal');
+  } catch (e) {
+    showToast('Gagal: ' + e.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function togglePacked(id, current) {
+  const { db, doc, updateDoc } = fb();
+  await updateDoc(doc(db, 'trips', currentTrip.id, 'packing', id), { packed: !current });
+}
+
+async function deletePacking(id) {
+  if (!confirm('Hapus item ini?')) return;
+  const { db, doc, deleteDoc } = fb();
+  await deleteDoc(doc(db, 'trips', currentTrip.id, 'packing', id));
+}
+
+function renderPacking() {
+  const done = packingItems.filter(p => p.packed).length;
+  const total = packingItems.length;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  $('packing-done-count').textContent = done;
+  $('packing-total-count').textContent = total;
+  $('packing-progress-bar').style.width = pct + '%';
+
+  const el = $('packing-list');
+  if (!el) return;
+  if (packingItems.length === 0) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">◻</div>Belum ada item. Mulai buat packing list!</div>';
+    return;
+  }
+
+  // Group by category
+  const grouped = {};
+  const catIcons = { pakaian: '👕', toiletries: '🧴', dokumen: '📄', elektronik: '🔌', obat: '💊', lainnya: '📦' };
+  packingItems.forEach(p => {
+    if (!grouped[p.category]) grouped[p.category] = [];
+    grouped[p.category].push(p);
+  });
+
+  el.innerHTML = Object.entries(grouped).map(([cat, items]) => `
+    <div style="margin-bottom:16px">
+      <div style="font-size:0.75rem;font-weight:600;color:var(--text-light);text-transform:uppercase;letter-spacing:1px;padding:4px 0 8px">
+        ${catIcons[cat] || '📦'} ${cat}
+      </div>
+      ${items.map(p => `
+        <div class="packing-item ${p.packed ? 'packed' : ''}">
+          <div class="pack-checkbox ${p.packed ? 'checked' : ''}" onclick="togglePacked('${p.id}', ${p.packed})">
+            ${p.packed ? '✓' : ''}
+          </div>
+          <div class="pack-info">
+            <div class="pack-name">${p.item}</div>
+            ${p.assignee && members[p.assignee] ? `<div class="pack-meta">→ ${members[p.assignee].name}</div>` : ''}
+          </div>
+          <button class="btn-icon danger" onclick="deletePacking('${p.id}')">✕</button>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+}
+
+// ================================================================
+// DOCUMENTATION
+// ================================================================
+function openDocsModal() {
+  if (!currentTrip) { showToast('Pilih trip dulu'); return; }
+  $('doc-title').value = '';
+  $('doc-file').value = '';
+  $('doc-preview').classList.add('hidden');
+  $('doc-upload-placeholder').classList.remove('hidden');
+  openModal('docs-modal');
+}
+
+function previewDocImage(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    $('doc-preview').src = e.target.result;
+    $('doc-preview').classList.remove('hidden');
+    $('doc-upload-placeholder').classList.add('hidden');
+  };
+  reader.readAsDataURL(file);
+}
+
+async function saveDoc() {
+  if (!currentTrip) return;
+  const title = $('doc-title').value.trim();
+  const file = $('doc-file').files[0];
+  if (!file) { showToast('Pilih gambar dulu'); return; }
+  if (!title) { showToast('Judul wajib diisi'); return; }
+  setLoading(true);
+  try {
+    // Convert to base64 for storage (small images)
+    const base64 = await fileToBase64(file);
+    const { db, collection, addDoc, serverTimestamp } = fb();
+    await addDoc(collection(db, 'trips', currentTrip.id, 'documentation'), {
+      title,
+      imageData: base64,
+      createdBy: currentUser.uid,
+      createdAt: serverTimestamp()
+    });
+    showToast('Foto disimpan ✓');
+    closeModal('docs-modal');
+  } catch (e) {
+    showToast('Gagal: ' + e.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function deleteDoc(id) {
+  if (!confirm('Hapus foto ini?')) return;
+  const { db, doc, deleteDoc } = fb();
+  await deleteDoc(doc(db, 'trips', currentTrip.id, 'documentation', id));
+  showToast('Dihapus');
+}
+
+function renderDocs() {
+  const el = $('docs-grid');
+  if (!el) return;
+  if (docs.length === 0) {
+    el.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">◫</div>Belum ada dokumentasi</div>';
+    return;
+  }
+  el.innerHTML = docs.map(d => `
+    <div class="doc-item">
+      <img class="doc-thumb" src="${d.imageData}" alt="${d.title}" loading="lazy" />
+      <div class="doc-caption">${d.title}</div>
+      <div class="doc-delete">
+        <button class="btn-icon danger" onclick="deleteDoc('${d.id}')">✕</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ================================================================
+// NOTES
+// ================================================================
+function openNoteModal(editId = null) {
+  if (!currentTrip) { showToast('Pilih trip dulu'); return; }
+  $('note-edit-id').value = editId || '';
+  $('note-modal-title').textContent = editId ? 'Edit Catatan' : 'Tambah Catatan';
+  if (editId) {
+    const note = notes.find(n => n.id === editId);
+    if (note) {
+      $('note-title').value = note.title || '';
+      $('note-content').value = note.content || '';
+    }
+  } else {
+    $('note-title').value = '';
+    $('note-content').value = '';
+  }
+  openModal('note-modal');
+}
+
+async function saveNote() {
+  if (!currentTrip) return;
+  const editId = $('note-edit-id').value;
+  const title = $('note-title').value.trim();
+  const content = $('note-content').value.trim();
+  if (!title) { showToast('Judul wajib diisi'); return; }
+  setLoading(true);
+  try {
+    const { db, doc, addDoc, updateDoc, collection, serverTimestamp } = fb();
+    const data = { title, content, updatedBy: currentUser.uid, updatedAt: new Date().toISOString() };
+    if (editId) {
+      await updateDoc(doc(db, 'trips', currentTrip.id, 'notes', editId), data);
+    } else {
+      await addDoc(collection(db, 'trips', currentTrip.id, 'notes'), {
+        ...data, createdBy: currentUser.uid, createdAt: serverTimestamp()
+      });
+    }
+    showToast('Catatan disimpan ✓');
+    closeModal('note-modal');
+  } catch (e) {
+    showToast('Gagal: ' + e.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function deleteNote(id) {
+  if (!confirm('Hapus catatan ini?')) return;
+  const { db, doc, deleteDoc } = fb();
+  await deleteDoc(doc(db, 'trips', currentTrip.id, 'notes', id));
+  showToast('Dihapus');
+}
+
+function renderNotes() {
+  const el = $('notes-list');
+  if (!el) return;
+  if (notes.length === 0) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">◌</div>Belum ada catatan</div>';
+    return;
+  }
+  el.innerHTML = notes.map(n => `
+    <div class="note-item">
+      <div class="note-title">${n.title}</div>
+      <div class="note-content">${n.content || ''}</div>
+      <div class="note-footer">
+        <div class="note-author">oleh ${members[n.createdBy]?.name || '?'}</div>
+        <div class="note-actions">
+          <button class="btn-icon" onclick="openNoteModal('${n.id}')">✏</button>
+          <button class="btn-icon danger" onclick="deleteNote('${n.id}')">✕</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ================================================================
+// EXPORT
+// ================================================================
+function exportData() {
+  if (!currentTrip) { showToast('Pilih trip dulu'); return; }
+  const data = {
+    trip: currentTrip,
+    members: Object.values(members),
+    itinerary,
+    expenses,
+    deposits,
+    packing: packingItems,
+    notes,
+    exportedAt: new Date().toISOString(),
+    exportedBy: currentUser?.email
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `wandr-${currentTrip.name.replace(/\s+/g, '-')}-${todayISO()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Data diexport! ✓');
+}
+
+// ================================================================
+// INITIAL SETUP
+// ================================================================
+document.addEventListener('DOMContentLoaded', () => {
+  // Set today's date on relevant inputs
+  const todayInputs = ['exp-date', 'dep-date'];
+  todayInputs.forEach(id => {
+    const el = $(id);
+    if (el) el.value = todayISO();
+  });
+
+  // Check if no trip is selected
+  $('dashboard-content').classList.add('hidden');
+  $('no-trip-banner').classList.remove('hidden');
+
+  // Keyboard support for modals
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.modal:not(.hidden)').forEach(m => {
+        m.classList.add('hidden');
+      });
+    }
+  });
+});
+
+// Expose to global
+window.loginUser = loginUser;
+window.registerUser = registerUser;
+window.logoutUser = logoutUser;
+window.toggleAuth = toggleAuth;
+window.showApp = showApp;
+window.showAuth = showAuth;
+window.switchTab = switchTab;
+window.toggleSidebar = toggleSidebar;
+window.closeSidebar = closeSidebar;
+window.openTripModal = openTripModal;
+window.switchTripTab = switchTripTab;
+window.showCreateTrip = showCreateTrip;
+window.showJoinTrip = showJoinTrip;
+window.createTrip = createTrip;
+window.joinTrip = joinTrip;
+window.selectTrip = selectTrip;
+window.copyTripId = copyTripId;
+window.openItineraryModal = openItineraryModal;
+window.saveItinerary = saveItinerary;
+window.toggleItineraryStatus = toggleItineraryStatus;
+window.deleteItinerary = deleteItinerary;
+window.openExpenseModal = openExpenseModal;
+window.saveExpense = saveExpense;
+window.deleteExpense = deleteExpense;
+window.renderExpenses = renderExpenses;
+window.toggleForAll = toggleForAll;
+window.openDepositModal = openDepositModal;
+window.saveDeposit = saveDeposit;
+window.deleteDeposit = deleteDeposit;
+window.openPackingModal = openPackingModal;
+window.savePacking = savePacking;
+window.togglePacked = togglePacked;
+window.deletePacking = deletePacking;
+window.openDocsModal = openDocsModal;
+window.previewDocImage = previewDocImage;
+window.saveDoc = saveDoc;
+window.deleteDoc = deleteDoc;
+window.openNoteModal = openNoteModal;
+window.saveNote = saveNote;
+window.deleteNote = deleteNote;
+window.exportData = exportData;
+window.closeModal = closeModal;
+window.showUserMenu = () => {};
