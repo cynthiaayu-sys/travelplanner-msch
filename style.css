@@ -770,6 +770,7 @@ select {
 .cat-tiket { background: #F3E8FF; }
 .cat-penginapan { background: #E8FFF0; }
 .cat-belanja { background: #FFF0E8; }
+.cat-wisata { background: #E8F8FF; }
 .cat-lainnya { background: var(--cream-dark); }
 
 .exp-body { flex: 1; min-width: 0; }
@@ -1213,15 +1214,15 @@ select {
 }
 
 /* ---- NEW ADDITIONS ---- */
-.today-group { border-left: 3px solid var(--primary, #e67e22); }
-.today-badge { background: var(--primary, #e67e22); color: #fff; font-size: 0.7rem; padding: 2px 8px; border-radius: 99px; margin-left: 8px; }
+.today-group { border-left: 3px solid var(--gold); background: #FFFEF5; border-radius: var(--radius-sm); padding-left: 12px; }
+.today-badge { background: var(--gold); color: #fff; font-size: 0.7rem; padding: 2px 8px; border-radius: 99px; margin-left: 8px; }
 .itin-notes-text { font-size: 0.78rem; color: var(--text-light); margin-top: 4px; }
-.itin-maps-link { font-size: 0.78rem; color: var(--primary, #e67e22); text-decoration: none; }
+.itin-maps-link { font-size: 0.78rem; color: var(--sage-dark); text-decoration: none; }
 .priority-tag.high, .priority-tag.must { background: #fde8e8; color: #c0392b; }
 .priority-tag.medium, .priority-tag.normal { background: #fef9e7; color: #d35400; }
 .priority-tag.low, .priority-tag.optional { background: #eafaf1; color: #1e8449; }
 .status-tag.done { background: #eafaf1; color: #1e8449; }
-.status-tag.pending { background: #f0f0f0; color: #666; }
+.status-tag.planned, .status-tag.pending { background: #f0f0f0; color: #666; }
 
 .guest-badge { background: #e8f4fd; color: #2980b9; font-size: 0.68rem; padding: 1px 6px; border-radius: 4px; font-weight: 600; }
 
@@ -1240,3 +1241,90 @@ select {
 .total-row { border-top: 1px solid var(--border, #eee); margin-top: 4px; padding-top: 8px; }
 
 .dep-per-member .summary-item { align-items: flex-start; }
+
+/* ============ KAS BERSAMA ENHANCEMENTS ============ */
+.dep-per-member-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.dep-member-card {
+  background: var(--cream);
+  border: 1.5px solid var(--cream-border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  transition: var(--transition);
+}
+.dep-member-card:hover { box-shadow: var(--shadow-md); }
+
+.dep-member-avatar {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: var(--sage);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 1rem;
+  margin-bottom: 2px;
+}
+
+.dep-member-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-dark);
+  margin-bottom: 4px;
+}
+
+.dep-member-rows { width: 100%; display: flex; flex-direction: column; gap: 4px; }
+.dep-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.78rem;
+  color: var(--text-mid);
+  padding: 3px 0;
+}
+.dep-row-saldo {
+  border-top: 1px solid var(--cream-border);
+  padding-top: 6px;
+  margin-top: 2px;
+  font-size: 0.82rem;
+}
+.dep-val-dep { color: var(--sage-dark); font-weight: 600; }
+.dep-val-exp { color: var(--danger); font-weight: 500; }
+
+/* Status list */
+.dep-status-list { display: flex; flex-direction: column; gap: 16px; }
+.dep-status-group { display: flex; flex-direction: column; gap: 6px; }
+.dep-status-header {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 4px 0;
+  color: var(--text-mid);
+}
+.dep-status-header.dep-status-minus { color: var(--danger); }
+.dep-status-header.dep-status-plus { color: var(--success); }
+
+.dep-status-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--cream);
+  border: 1px solid var(--cream-border);
+}
+.dep-status-item-minus { background: #FFF5F3; border-color: #F5DDD8; }
+.dep-status-item-plus { background: #F0FBF1; border-color: #C8E6C9; }
+
+.settlement-arrow { color: var(--text-mid); font-weight: 500; font-size: 0.85rem; flex-shrink: 0; }
