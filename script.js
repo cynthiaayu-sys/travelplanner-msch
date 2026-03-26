@@ -54,8 +54,45 @@ function selectTrip(trip){ unsubListeners.slice(1).forEach(u=>u()); unsubListene
 function copyTripId(){ if(!currentTrip)return; navigator.clipboard.writeText(currentTrip.id).then(()=>showToast('Trip ID disalin! 📋')); }
 
 // ---- GUEST MEMBER ----
-function openAddMemberModal(){ if(!currentTrip){showToast('Pilih trip dulu');return;} $('guest-name').value=''; $('guest-role').value=''; openModal('add-member-modal'); }
-async function addGuestMember(){ if(!currentTrip)return; const name=$('guest-name').value.trim(),role=$('guest-role').value.trim(); if(!name){showToast('Nama anggota wajib diisi');return;} setLoading(true); try{ const{db,doc,setDoc}=fb(); const guestUid='guest_'+name.toLowerCase().replace(/\s+/g,'_')+'_'+Date.now(); await setDoc(doc(db,'trips',currentTrip.id,'members',guestUid),{uid:guestUid,name,role:role||'',email:'',isGuest:true,addedBy:currentUser.uid,addedAt:new Date().toISOString()}); showToast(name+' berhasil ditambahkan ✓'); closeModal('add-member-modal'); }catch(e){ showToast('Gagal: '+e.message); }finally{ setLoading(false); } }
+function openAddMemberModal(editUid=null){
+  if(!currentTrip){showToast('Pilih trip dulu');return;}
+  $('member-edit-uid').value=editUid||'';
+  if(editUid){
+    const m=members[editUid];
+    $('member-modal-title').textContent='Edit Anggota';
+    $('guest-name').value=m?.name||'';
+    $('guest-role').value=m?.role||'';
+  } else {
+    $('member-modal-title').textContent='Tambah Anggota';
+    $('guest-name').value='';
+    $('guest-role').value='';
+  }
+  openModal('add-member-modal');
+}
+
+async function saveGuestMember(){
+  if(!currentTrip)return;
+  const name=$('guest-name').value.trim(), role=$('guest-role').value.trim(), editUid=$('member-edit-uid').value;
+  if(!name){showToast('Nama anggota wajib diisi');return;}
+  setLoading(true);
+  try{
+    const{db,doc,setDoc,updateDoc}=fb();
+    if(editUid){
+      // Edit existing member
+      await updateDoc(doc(db,'trips',currentTrip.id,'members',editUid),{name,role:role||''});
+      showToast(name+' berhasil diperbarui ✓');
+    } else {
+      // Add new guest
+      const guestUid='guest_'+name.toLowerCase().replace(/\s+/g,'_')+'_'+Date.now();
+      await setDoc(doc(db,'trips',currentTrip.id,'members',guestUid),{uid:guestUid,name,role:role||'',email:'',isGuest:true,addedBy:currentUser.uid,addedAt:new Date().toISOString()});
+      showToast(name+' berhasil ditambahkan ✓');
+    }
+    closeModal('add-member-modal');
+  }catch(e){ showToast('Gagal: '+e.message); }finally{ setLoading(false); }
+}
+
+// keep backward compat
+async function addGuestMember(){ await saveGuestMember(); }
 async function removeMember(uid){ if(!currentTrip)return; const m=members[uid]; if(!confirm('Hapus '+(m?.name||uid)+' dari trip ini?'))return; try{ const{db,doc,deleteDoc}=fb(); await deleteDoc(doc(db,'trips',currentTrip.id,'members',uid)); showToast('Anggota dihapus'); }catch(e){ showToast('Gagal: '+e.message); } }
 
 // ---- SUBSCRIPTIONS ----
@@ -76,22 +113,108 @@ function getMemberExpensePaid(){ const paid={}; Object.keys(members).forEach(uid
 function getMemberExpenseShare(){ const share={}; Object.keys(members).forEach(uid=>share[uid]=0); expenses.forEach(exp=>{ let fw=exp.forWhom||Object.keys(members); if(!Array.isArray(fw)||fw.length===0)fw=Object.keys(members); const pp=(exp.amount||0)/fw.length; fw.forEach(uid=>{ share[uid]=(share[uid]||0)+pp; }); }); return share; }
 function getMemberDeposits(){ const dep={}; Object.keys(members).forEach(uid=>dep[uid]=0); deposits.forEach(d=>{ if(d.member)dep[d.member]=(dep[d.member]||0)+(d.amount||0); }); return dep; }
 
-function renderMemberBalances(){ const el=$('members-list'); if(!el)return; const paid=getMemberExpensePaid(),share=getMemberExpenseShare(),dep=getMemberDeposits(); if(Object.keys(members).length===0){el.innerHTML='<div class="empty-state">Belum ada anggota<br><button class="btn-secondary" style="margin-top:12px" onclick="openAddMemberModal()">+ Tambah Anggota</button></div>';return;} el.innerHTML=Object.values(members).map(m=>{ const finalBalance=(dep[m.uid]||0)-(share[m.uid]||0); return `<div class="member-item"><div class="member-avatar">${initials(m.name)}</div><div class="member-info"><div class="member-name">${m.name}${m.isGuest?' <span class="guest-badge">Tamu</span>':''}</div><div style="font-size:0.75rem;color:var(--text-light)">Kas: ${fmt(dep[m.uid]||0)} | Share: ${fmt(share[m.uid]||0)} | Bayar: ${fmt(paid[m.uid]||0)}</div></div><div style="display:flex;align-items:center;gap:8px"><div class="member-balance ${finalBalance>=0?'positive':'negative'}">${fmtSigned(finalBalance)}</div>${currentTrip?.owner===currentUser?.uid&&m.uid!==currentUser?.uid?`<button class="btn-icon danger" onclick="removeMember('${m.uid}')" title="Hapus">✕</button>`:''}</div></div>`; }).join('')+`<button class="btn-secondary" style="width:100%;margin-top:8px" onclick="openAddMemberModal()">+ Tambah Anggota Tanpa Login</button>`; }
+function renderMemberBalances(){ const el=$('members-list'); if(!el)return; const paid=getMemberExpensePaid(),share=getMemberExpenseShare(),dep=getMemberDeposits(); if(Object.keys(members).length===0){el.innerHTML='<div class="empty-state">Belum ada anggota<br><button class="btn-secondary" style="margin-top:12px" onclick="openAddMemberModal()">+ Tambah Anggota</button></div>';return;} el.innerHTML=Object.values(members).map(m=>{ const finalBalance=(dep[m.uid]||0)-(share[m.uid]||0); const isOwner=currentTrip?.owner===currentUser?.uid; return `<div class="member-item"><div class="member-avatar">${initials(m.name)}</div><div class="member-info"><div class="member-name">${m.name}${m.isGuest?' <span class="guest-badge">Tamu</span>':''}${m.role?` <span style="font-size:0.72rem;color:var(--text-light);font-weight:400">(${m.role})</span>`:''}</div><div style="font-size:0.75rem;color:var(--text-light)">Kas: ${fmt(dep[m.uid]||0)} | Share: ${fmt(share[m.uid]||0)} | Bayar: ${fmt(paid[m.uid]||0)}</div></div><div style="display:flex;align-items:center;gap:4px"><div class="member-balance ${finalBalance>=0?'positive':'negative'}">${fmtSigned(finalBalance)}</div>${m.isGuest||isOwner?`<button class="btn-icon" onclick="openAddMemberModal('${m.uid}')" title="Edit">✏</button>`:''}${isOwner&&m.uid!==currentUser?.uid?`<button class="btn-icon danger" onclick="removeMember('${m.uid}')" title="Hapus">✕</button>`:''}</div></div>`; }).join('')+`<button class="btn-secondary" style="width:100%;margin-top:8px" onclick="openAddMemberModal()">+ Tambah Anggota Tanpa Login</button>`; }
 
-function renderSettlement(){ const el=$('settlement-list'); if(!el)return; const paid=getMemberExpensePaid(),share=getMemberExpenseShare(),net={}; Object.keys(members).forEach(uid=>{net[uid]=(paid[uid]||0)-(share[uid]||0);}); const settlements=computeSettlements(net); if(settlements.length===0){el.innerHTML='<div class="empty-state">✅ Semua sudah seimbang!</div>';return;} el.innerHTML=settlements.map(s=>`<div class="settlement-item"><div class="member-avatar" style="width:30px;height:30px;font-size:0.7rem">${initials(members[s.from]?.name||'?')}</div><span style="font-weight:500">${members[s.from]?.name||s.from}</span><span class="settlement-arrow">→</span><div class="member-avatar" style="width:30px;height:30px;font-size:0.7rem;background:var(--sage)">${initials(members[s.to]?.name||'?')}</div><span style="font-weight:500">${members[s.to]?.name||s.to}</span><span class="settlement-amount">${fmt(s.amount)}</span></div>`).join(''); }
+function renderSettlement(){
+  const el=$('settlement-list'); if(!el)return;
+  const dep=getMemberDeposits(), share=getMemberExpenseShare(), paid=getMemberExpensePaid();
+  // Net = (apa yang sudah dibayar ke luar + deposit) - share yang harus ditanggung
+  // Tapi untuk settlement: kita hitung siapa "lebih bayar" vs "kurang bayar"
+  // net[uid] = total_bayar_langsung[uid] - share[uid]
+  // (deposit ke pooler sudah terepresentasi di paid/share masing2)
+  const net={};
+  Object.keys(members).forEach(uid=>{net[uid]=(paid[uid]||0)-(share[uid]||0);});
+  const settlements=computeSettlements(net);
+  if(settlements.length===0){el.innerHTML='<div class="empty-state">✅ Semua sudah seimbang!</div>';return;}
+  el.innerHTML=settlements.map(s=>`<div class="settlement-item">
+    <div class="member-avatar" style="width:30px;height:30px;font-size:0.7rem">${initials(members[s.from]?.name||'?')}</div>
+    <span style="font-weight:500">${members[s.from]?.name||s.from}</span>
+    <span class="settlement-arrow">→</span>
+    <div class="member-avatar" style="width:30px;height:30px;font-size:0.7rem;background:var(--sage)">${initials(members[s.to]?.name||'?')}</div>
+    <span style="font-weight:500">${members[s.to]?.name||s.to}</span>
+    <span class="settlement-amount">${fmt(s.amount)}</span>
+  </div>`).join('');
+}
 
 function computeSettlements(net){ const debtors=[],creditors=[]; Object.entries(net).forEach(([uid,n])=>{ if(n<-0.01)debtors.push({uid,amount:-n}); else if(n>0.01)creditors.push({uid,amount:n}); }); const result=[]; let i=0,j=0; while(i<debtors.length&&j<creditors.length){ const d=debtors[i],c=creditors[j],amount=Math.min(d.amount,c.amount); if(amount>0.01)result.push({from:d.uid,to:c.uid,amount:Math.round(amount)}); d.amount-=amount; c.amount-=amount; if(d.amount<0.01)i++; if(c.amount<0.01)j++; } return result; }
 
 function renderRecentExpenses(){ const el=$('recent-expenses'); if(!el)return; const recent=expenses.slice(0,5); if(recent.length===0){el.innerHTML='<div class="empty-state">Belum ada pengeluaran</div>';return;} el.innerHTML=recent.map(e=>`<div class="recent-item"><div class="recent-item-icon">${catIcon(e.category)}</div><div class="recent-item-info"><div class="recent-item-desc">${e.description||'-'}</div><div class="recent-item-meta">${e.date||''} • ${members[e.payer]?.name||'?'}</div></div><div class="recent-item-amount">${fmt(e.amount)}</div></div>`).join(''); }
 
 // ---- ITINERARY ----
-function openItineraryModal(editId=null){ if(!currentTrip){showToast('Pilih trip dulu');return;} $('itinerary-edit-id').value=editId||''; $('itinerary-modal-title').textContent=editId?'Edit Aktivitas':'Tambah Aktivitas'; if(editId){ const item=itinerary.find(i=>i.id===editId); if(item){ $('itin-day').value=item.day||''; $('itin-date').value=item.date||''; $('itin-time-start').value=item.timeStart||''; $('itin-time-end').value=item.timeEnd||''; $('itin-activity').value=item.activity||''; $('itin-location').value=item.location||''; $('itin-maps').value=item.mapsUrl||''; const pri=item.priority; $('itin-priority').value=(pri==='normal'||pri==='must'||pri==='optional')?'medium':(pri||'medium'); $('itin-status').value=(item.status==='pending')?'planned':(item.status||'planned'); $('itin-notes').value=item.notes||''; } }else{ ['itin-day','itin-date','itin-time-start','itin-time-end','itin-activity','itin-location','itin-maps','itin-notes'].forEach(id=>$(id).value=''); $('itin-priority').value='medium'; $('itin-status').value='planned'; } openModal('itinerary-modal'); }
+function openItineraryModal(editId=null){ if(!currentTrip){showToast('Pilih trip dulu');return;} $('itinerary-edit-id').value=editId||''; $('itinerary-modal-title').textContent=editId?'Edit Aktivitas':'Tambah Aktivitas'; if(editId){ const item=itinerary.find(i=>i.id===editId); if(item){ $('itin-day').value=item.day||''; $('itin-date').value=item.date||''; $('itin-time-start').value=item.timeStart||''; $('itin-time-end').value=item.timeEnd||''; $('itin-activity').value=item.activity||''; $('itin-location').value=item.location||''; $('itin-maps').value=item.mapsUrl||''; const pri=item.priority; $('itin-priority').value=(pri==='normal'||pri==='must'||pri==='optional')?'medium':(pri||'medium'); $('itin-status').value=(item.status==='pending')?'planned':(item.status||'planned'); $('itin-notes').value=item.notes||''; $('itin-budget-est').value=item.budgetEst||''; $('itin-budget-actual').value=item.budgetActual||''; } }else{ ['itin-day','itin-date','itin-time-start','itin-time-end','itin-activity','itin-location','itin-maps','itin-notes','itin-budget-est','itin-budget-actual'].forEach(id=>$(id).value=''); $('itin-priority').value='medium'; $('itin-status').value='planned'; } openModal('itinerary-modal'); }
 
-async function saveItinerary(){ if(!currentTrip)return; const editId=$('itinerary-edit-id').value; const data={day:parseInt($('itin-day').value)||1,date:$('itin-date').value,timeStart:$('itin-time-start').value,timeEnd:$('itin-time-end').value,activity:$('itin-activity').value.trim(),location:$('itin-location').value.trim(),mapsUrl:$('itin-maps').value.trim(),priority:$('itin-priority').value,status:$('itin-status').value,notes:$('itin-notes').value.trim(),updatedBy:currentUser.uid,updatedAt:new Date().toISOString()}; if(!data.activity){showToast('Nama aktivitas wajib diisi');return;} setLoading(true); try{ const{db,doc,addDoc,updateDoc,collection,serverTimestamp}=fb(); if(editId){await updateDoc(doc(db,'trips',currentTrip.id,'itinerary',editId),data);}else{data.createdBy=currentUser.uid;data.createdAt=serverTimestamp();await addDoc(collection(db,'trips',currentTrip.id,'itinerary'),data);} showToast('Aktivitas disimpan ✓'); closeModal('itinerary-modal'); }catch(e){ showToast('Gagal: '+e.message); }finally{ setLoading(false); } }
+async function saveItinerary(){ if(!currentTrip)return; const editId=$('itinerary-edit-id').value; const data={day:parseInt($('itin-day').value)||1,date:$('itin-date').value,timeStart:$('itin-time-start').value,timeEnd:$('itin-time-end').value,activity:$('itin-activity').value.trim(),location:$('itin-location').value.trim(),mapsUrl:$('itin-maps').value.trim(),priority:$('itin-priority').value,status:$('itin-status').value,notes:$('itin-notes').value.trim(),budgetEst:parseFloat($('itin-budget-est').value)||0,budgetActual:parseFloat($('itin-budget-actual').value)||0,updatedBy:currentUser.uid,updatedAt:new Date().toISOString()}; if(!data.activity){showToast('Nama aktivitas wajib diisi');return;} setLoading(true); try{ const{db,doc,addDoc,updateDoc,collection,serverTimestamp}=fb(); if(editId){await updateDoc(doc(db,'trips',currentTrip.id,'itinerary',editId),data);}else{data.createdBy=currentUser.uid;data.createdAt=serverTimestamp();await addDoc(collection(db,'trips',currentTrip.id,'itinerary'),data);} showToast('Aktivitas disimpan ✓'); closeModal('itinerary-modal'); }catch(e){ showToast('Gagal: '+e.message); }finally{ setLoading(false); } }
 async function toggleItineraryStatus(id,current){ if(!currentTrip)return; const{db,doc,updateDoc}=fb(); await updateDoc(doc(db,'trips',currentTrip.id,'itinerary',id),{status:current==='done'?'planned':'done'}); }
 async function deleteItinerary(id){ if(!confirm('Hapus aktivitas ini?'))return; const{db,doc,deleteDoc}=fb(); await deleteDoc(doc(db,'trips',currentTrip.id,'itinerary',id)); showToast('Aktivitas dihapus'); }
 
-function renderItinerary(){ const el=$('itinerary-list'); if(!el)return; const done=itinerary.filter(i=>i.status==='done').length,total=itinerary.length,pct=total>0?Math.round((done/total)*100):0; const pb=$('itin-progress-bar'),pl=$('itin-progress-label'); if(pb)pb.style.width=pct+'%'; if(pl)pl.textContent=`${done}/${total} selesai (${pct}%)`; if(itinerary.length===0){el.innerHTML='<div class="empty-state"><div class="empty-icon">◷</div>Belum ada aktivitas. Tambah itinerary pertama kamu!</div>';return;} const today=todayISO(); const grouped={}; itinerary.forEach(item=>{ const k=item.day||1; if(!grouped[k])grouped[k]={date:item.date,items:[]}; grouped[k].items.push(item); }); Object.values(grouped).forEach(g=>g.items.sort((a,b)=>(a.timeStart||'').localeCompare(b.timeStart||''))); el.innerHTML=Object.keys(grouped).sort((a,b)=>Number(a)-Number(b)).map(dayNum=>{ const{date,items}=grouped[dayNum],isToday=date===today; return `<div class="itin-day-group${isToday?' today-group':''}"><div class="itin-day-label">Hari ${dayNum}${date?' — '+date:''}${isToday?' <span class="today-badge">Hari Ini 📍</span>':''}</div>${items.map(item=>{ const isDone=item.status==='done'; const pLabel={high:'🔴 High',medium:'🟡 Medium',low:'🟢 Low',must:'⭐ Must Do',optional:'Optional',normal:'Normal'}[item.priority]||item.priority; const sLabel=isDone?'✅ Done':'📋 Planned'; return `<div class="itin-item${isDone?' done':''} priority-${item.priority}"><div><button class="status-toggle${isDone?' done':''}" onclick="toggleItineraryStatus('${item.id}','${item.status}')">${isDone?'✓':''}</button></div><div class="itin-time">${item.timeStart||'--:--'}${item.timeEnd?'<br><span style="color:var(--text-light)">'+item.timeEnd+'</span>':''}</div><div class="itin-body"><div class="itin-activity">${item.activity}</div>${item.location?`<div class="itin-location">📍 ${item.location}</div>`:''}${item.mapsUrl?`<a class="itin-maps-link" href="${item.mapsUrl}" target="_blank" rel="noopener">🗺 Lihat Maps</a>`:''}${item.notes?`<div class="itin-notes-text">💬 ${item.notes}</div>`:''}<div class="itin-tags"><span class="tag priority-tag ${item.priority}">${pLabel}</span><span class="tag status-tag ${isDone?'done':'planned'}">${sLabel}</span></div></div><div class="itin-actions"><button class="btn-icon" onclick="openItineraryModal('${item.id}')">✏</button><button class="btn-icon danger" onclick="deleteItinerary('${item.id}')">✕</button></div></div>`; }).join('')}</div>`; }).join(''); }
+function renderItinerary(){
+  const el=$('itinerary-list'); if(!el)return;
+  const done=itinerary.filter(i=>i.status==='done').length,total=itinerary.length,pct=total>0?Math.round((done/total)*100):0;
+  const pb=$('itin-progress-bar'),pl=$('itin-progress-label');
+  if(pb)pb.style.width=pct+'%';
+  if(pl)pl.textContent=`${done}/${total} selesai (${pct}%)`;
+
+  // Budget summary
+  const totalEst=itinerary.reduce((s,i)=>s+(i.budgetEst||0),0);
+  const totalActual=itinerary.reduce((s,i)=>s+(i.budgetActual||0),0);
+  const budgetEl=$('itin-budget-summary');
+  if(budgetEl){
+    if(totalEst>0||totalActual>0){
+      const diff=totalActual-totalEst;
+      const diffColor=diff>0?'var(--danger)':diff<0?'var(--success)':'var(--text-mid)';
+      budgetEl.innerHTML=`<div class="itin-budget-bar"><div class="itin-budget-item"><span>💰 Estimasi</span><strong>${fmt(totalEst)}</strong></div><div class="itin-budget-item"><span>🧾 Aktual</span><strong>${fmt(totalActual)}</strong></div><div class="itin-budget-item"><span>Selisih</span><strong style="color:${diffColor}">${diff>=0?'+':''}${fmt(diff)}</strong></div></div>`;
+      budgetEl.classList.remove('hidden');
+    } else { budgetEl.classList.add('hidden'); }
+  }
+
+  if(itinerary.length===0){el.innerHTML='<div class="empty-state"><div class="empty-icon">◷</div>Belum ada aktivitas. Tambah itinerary pertama kamu!</div>';return;}
+  const today=todayISO();
+  const grouped={};
+  itinerary.forEach(item=>{ const k=item.day||1; if(!grouped[k])grouped[k]={date:item.date,items:[]}; grouped[k].items.push(item); });
+  Object.values(grouped).forEach(g=>g.items.sort((a,b)=>(a.timeStart||'').localeCompare(b.timeStart||'')));
+  el.innerHTML=Object.keys(grouped).sort((a,b)=>Number(a)-Number(b)).map(dayNum=>{
+    const{date,items}=grouped[dayNum],isToday=date===today;
+    const dayEst=items.reduce((s,i)=>s+(i.budgetEst||0),0);
+    const dayActual=items.reduce((s,i)=>s+(i.budgetActual||0),0);
+    const hasBudget=dayEst>0||dayActual>0;
+    return `<div class="itin-day-group${isToday?' today-group':''}">
+      <div class="itin-day-label">
+        Hari ${dayNum}${date?' — '+date:''}${isToday?' <span class="today-badge">Hari Ini 📍</span>':''}
+        ${hasBudget?`<span class="itin-day-budget">Est: ${fmt(dayEst)}${dayActual>0?' | Aktual: '+fmt(dayActual):''}</span>`:''}
+      </div>
+      ${items.map(item=>{
+        const isDone=item.status==='done';
+        const pLabel={high:'🔴 High',medium:'🟡 Medium',low:'🟢 Low',must:'⭐ Must Do',optional:'Optional',normal:'Normal'}[item.priority]||item.priority;
+        const sLabel=isDone?'✅ Done':'📋 Planned';
+        const hasBudgetItem=(item.budgetEst||0)>0||(item.budgetActual||0)>0;
+        const budgetDiff=(item.budgetActual||0)-(item.budgetEst||0);
+        return `<div class="itin-item${isDone?' done':''} priority-${item.priority}">
+          <div><button class="status-toggle${isDone?' done':''}" onclick="toggleItineraryStatus('${item.id}','${item.status}')">${isDone?'✓':''}</button></div>
+          <div class="itin-time">${item.timeStart||'--:--'}${item.timeEnd?'<br><span style="color:var(--text-light)">'+item.timeEnd+'</span>':''}</div>
+          <div class="itin-body">
+            <div class="itin-activity">${item.activity}</div>
+            ${item.location?`<div class="itin-location">📍 ${item.location}</div>`:''}
+            ${item.mapsUrl?`<a class="itin-maps-link" href="${item.mapsUrl}" target="_blank" rel="noopener">🗺 Lihat Maps</a>`:''}
+            ${hasBudgetItem?`<div class="itin-budget-row">
+              ${(item.budgetEst||0)>0?`<span class="itin-budget-tag est">💰 Est: ${fmt(item.budgetEst)}</span>`:''}
+              ${(item.budgetActual||0)>0?`<span class="itin-budget-tag actual">🧾 Aktual: ${fmt(item.budgetActual)}</span>`:''}
+              ${(item.budgetEst||0)>0&&(item.budgetActual||0)>0?`<span class="itin-budget-tag diff" style="color:${budgetDiff>0?'var(--danger)':'var(--success)'}">${budgetDiff>=0?'+':''}${fmt(budgetDiff)}</span>`:''}
+            </div>`:''}
+            ${item.notes?`<div class="itin-notes-text">💬 ${item.notes}</div>`:''}
+            <div class="itin-tags">
+              <span class="tag priority-tag ${item.priority}">${pLabel}</span>
+              <span class="tag status-tag ${isDone?'done':'planned'}">${sLabel}</span>
+            </div>
+          </div>
+          <div class="itin-actions">
+            <button class="btn-icon" onclick="openItineraryModal('${item.id}')">✏</button>
+            <button class="btn-icon danger" onclick="deleteItinerary('${item.id}')">✕</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+}
 
 // ---- EXPENSES ----
 function openExpenseModal(editId=null){ if(!currentTrip){showToast('Pilih trip dulu');return;} populateMemberSelects(); $('expense-edit-id').value=editId||''; $('expense-modal-title').textContent=editId?'Edit Pengeluaran':'Tambah Pengeluaran'; if(editId){ const item=expenses.find(e=>e.id===editId); if(item){ $('exp-date').value=item.date||''; $('exp-category').value=item.category||'lainnya'; $('exp-desc').value=item.description||''; $('exp-amount').value=item.amount||''; $('exp-payer').value=item.payer||''; setTimeout(()=>{ const forAll=!item.forWhom||item.forWhom.length===Object.keys(members).length; $('exp-for-all').checked=forAll; toggleForAll(); if(!forAll&&item.forWhom)document.querySelectorAll('.for-whom-check').forEach(cb=>{cb.checked=item.forWhom.includes(cb.value);}); },100); } }else{ $('exp-date').value=todayISO(); $('exp-desc').value=''; $('exp-amount').value=''; $('exp-for-all').checked=true; toggleForAll(); } openModal('expense-modal'); }
@@ -139,32 +262,36 @@ function renderDeposits(){
     }
   }
 
-  // Status (nombok / surplus)
+  // Status (nombok / surplus) — berdasarkan paid vs share
   const dsl=$('dep-status-list');
   if(dsl){
+    const paid=getMemberExpensePaid();
     const mlist=Object.values(members);
     if(mlist.length===0){dsl.innerHTML='<div class="empty-state">Belum ada anggota</div>';}
     else{
       const nombok=[], surplus=[], impas=[];
       mlist.forEach(m=>{
-        const saldo=(dep[m.uid]||0)-(share[m.uid]||0);
+        const saldo=(paid[m.uid]||0)-(share[m.uid]||0);
         if(saldo<-0.01)nombok.push({m,saldo});
         else if(saldo>0.01)surplus.push({m,saldo});
         else impas.push({m,saldo});
       });
       let html='';
-      if(nombok.length)html+=`<div class="dep-status-group"><div class="dep-status-header dep-status-minus">💸 Kekurangan Dana (Perlu Membayar)</div>${nombok.map(({m,saldo})=>`<div class="dep-status-item dep-status-item-minus"><div class="member-avatar" style="background:var(--danger);width:32px;height:32px;font-size:0.7rem;flex-shrink:0">${initials(m.name)}</div><div style="flex:1"><div style="font-weight:500;font-size:0.9rem">${m.name}</div><div style="font-size:0.75rem;color:var(--text-light)">Saldo negatif</div></div><div style="font-weight:700;color:var(--danger)">${fmtSigned(saldo)}</div></div>`).join('')}</div>`;
-      if(surplus.length)html+=`<div class="dep-status-group"><div class="dep-status-header dep-status-plus">✅ Surplus Dana</div>${surplus.map(({m,saldo})=>`<div class="dep-status-item dep-status-item-plus"><div class="member-avatar" style="background:var(--success);width:32px;height:32px;font-size:0.7rem;flex-shrink:0">${initials(m.name)}</div><div style="flex:1"><div style="font-weight:500;font-size:0.9rem">${m.name}</div><div style="font-size:0.75rem;color:var(--text-light)">Saldo positif</div></div><div style="font-weight:700;color:var(--success)">${fmtSigned(saldo)}</div></div>`).join('')}</div>`;
-      if(impas.length)html+=`<div class="dep-status-group"><div class="dep-status-header">⚖️ Seimbang</div>${impas.map(({m})=>`<div class="dep-status-item"><div class="member-avatar" style="width:32px;height:32px;font-size:0.7rem;flex-shrink:0">${initials(m.name)}</div><div style="flex:1;font-weight:500;font-size:0.9rem">${m.name}</div><div style="font-weight:600;color:var(--text-mid)">Rp 0</div></div>`).join('')}</div>`;
+      if(nombok.length)html+=`<div class="dep-status-group"><div class="dep-status-header dep-status-minus">💸 Masih Perlu Membayar (Nombok)</div>${nombok.map(({m,saldo})=>`<div class="dep-status-item dep-status-item-minus"><div class="member-avatar" style="background:var(--danger);width:32px;height:32px;font-size:0.7rem;flex-shrink:0">${initials(m.name)}</div><div style="flex:1"><div style="font-weight:500;font-size:0.9rem">${m.name}</div><div style="font-size:0.75rem;color:var(--text-light)">Bayar lebih sedikit dari porsinya</div></div><div style="font-weight:700;color:var(--danger)">${fmtSigned(saldo)}</div></div>`).join('')}</div>`;
+      if(surplus.length)html+=`<div class="dep-status-group"><div class="dep-status-header dep-status-plus">✅ Sudah Lebih Bayar (Surplus)</div>${surplus.map(({m,saldo})=>`<div class="dep-status-item dep-status-item-plus"><div class="member-avatar" style="background:var(--success);width:32px;height:32px;font-size:0.7rem;flex-shrink:0">${initials(m.name)}</div><div style="flex:1"><div style="font-weight:500;font-size:0.9rem">${m.name}</div><div style="font-size:0.75rem;color:var(--text-light)">Bayar melebihi porsinya</div></div><div style="font-weight:700;color:var(--success)">${fmtSigned(saldo)}</div></div>`).join('')}</div>`;
+      if(impas.length)html+=`<div class="dep-status-group"><div class="dep-status-header">⚖️ Sudah Seimbang</div>${impas.map(({m})=>`<div class="dep-status-item"><div class="member-avatar" style="width:32px;height:32px;font-size:0.7rem;flex-shrink:0">${initials(m.name)}</div><div style="flex:1;font-weight:500;font-size:0.9rem">${m.name}</div><div style="font-weight:600;color:var(--text-mid)">Rp 0</div></div>`).join('')}</div>`;
       dsl.innerHTML=html||'<div class="empty-state">Belum ada data</div>';
     }
   }
 
-  // Settlement kas bersama (berdasarkan deposit - share)
+  // Settlement kas bersama — net = paid_langsung - share
+  // Skenario: A,B,C setor ke D → D bayar semua → D punya paid besar, share juga besar
+  // A,B,C punya deposit tapi paid=0, share=bagiannya → net negatif → harus ke D
   const settEl=$('dep-settlement-list');
   if(settEl){
+    const paid=getMemberExpensePaid();
     const net={};
-    Object.keys(members).forEach(uid=>{net[uid]=(dep[uid]||0)-(share[uid]||0);});
+    Object.keys(members).forEach(uid=>{net[uid]=(paid[uid]||0)-(share[uid]||0);});
     const settlements=computeSettlements(net);
     if(settlements.length===0){settEl.innerHTML='<div class="empty-state">✅ Semua sudah seimbang!</div>';}
     else{
@@ -215,4 +342,4 @@ function exportData(){ if(!currentTrip){showToast('Pilih trip dulu');return;} co
 
 document.addEventListener('DOMContentLoaded',()=>{ ['exp-date','dep-date','doc-date'].forEach(id=>{const el=$(id);if(el)el.value=todayISO();}); $('dashboard-content').classList.add('hidden'); $('no-trip-banner').classList.remove('hidden'); document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.modal:not(.hidden)').forEach(m=>m.classList.add('hidden'));}); });
 
-window.loginUser=loginUser;window.registerUser=registerUser;window.logoutUser=logoutUser;window.toggleAuth=toggleAuth;window.showApp=showApp;window.showAuth=showAuth;window.switchTab=switchTab;window.toggleSidebar=toggleSidebar;window.closeSidebar=closeSidebar;window.openTripModal=openTripModal;window.switchTripTab=switchTripTab;window.showCreateTrip=showCreateTrip;window.showJoinTrip=showJoinTrip;window.createTrip=createTrip;window.joinTrip=joinTrip;window.selectTrip=selectTrip;window.copyTripId=copyTripId;window.openAddMemberModal=openAddMemberModal;window.addGuestMember=addGuestMember;window.removeMember=removeMember;window.openItineraryModal=openItineraryModal;window.saveItinerary=saveItinerary;window.toggleItineraryStatus=toggleItineraryStatus;window.deleteItinerary=deleteItinerary;window.renderExpenses=renderExpenses;window.openExpenseModal=openExpenseModal;window.saveExpense=saveExpense;window.deleteExpense=deleteExpense;window.toggleForAll=toggleForAll;window.openDepositModal=openDepositModal;window.saveDeposit=saveDeposit;window.deleteDeposit=deleteDeposit;window.openPackingModal=openPackingModal;window.savePacking=savePacking;window.togglePacked=togglePacked;window.deletePacking=deletePacking;window.renderPacking=renderPacking;window.openDocsModal=openDocsModal;window.previewDocImage=previewDocImage;window.saveDoc=saveDoc;window.deleteDoc=deleteDoc;window.openDocLightbox=openDocLightbox;window.closeDocLightbox=closeDocLightbox;window.openNoteModal=openNoteModal;window.saveNote=saveNote;window.deleteNote=deleteNote;window.exportData=exportData;window.closeModal=closeModal;window.showUserMenu=()=>{};
+window.loginUser=loginUser;window.registerUser=registerUser;window.logoutUser=logoutUser;window.toggleAuth=toggleAuth;window.showApp=showApp;window.showAuth=showAuth;window.switchTab=switchTab;window.toggleSidebar=toggleSidebar;window.closeSidebar=closeSidebar;window.openTripModal=openTripModal;window.switchTripTab=switchTripTab;window.showCreateTrip=showCreateTrip;window.showJoinTrip=showJoinTrip;window.createTrip=createTrip;window.joinTrip=joinTrip;window.selectTrip=selectTrip;window.copyTripId=copyTripId;window.openAddMemberModal=openAddMemberModal;window.addGuestMember=addGuestMember;window.saveGuestMember=saveGuestMember;window.removeMember=removeMember;window.openItineraryModal=openItineraryModal;window.saveItinerary=saveItinerary;window.toggleItineraryStatus=toggleItineraryStatus;window.deleteItinerary=deleteItinerary;window.renderExpenses=renderExpenses;window.openExpenseModal=openExpenseModal;window.saveExpense=saveExpense;window.deleteExpense=deleteExpense;window.toggleForAll=toggleForAll;window.openDepositModal=openDepositModal;window.saveDeposit=saveDeposit;window.deleteDeposit=deleteDeposit;window.openPackingModal=openPackingModal;window.savePacking=savePacking;window.togglePacked=togglePacked;window.deletePacking=deletePacking;window.renderPacking=renderPacking;window.openDocsModal=openDocsModal;window.previewDocImage=previewDocImage;window.saveDoc=saveDoc;window.deleteDoc=deleteDoc;window.openDocLightbox=openDocLightbox;window.closeDocLightbox=closeDocLightbox;window.openNoteModal=openNoteModal;window.saveNote=saveNote;window.deleteNote=deleteNote;window.exportData=exportData;window.closeModal=closeModal;window.showUserMenu=()=>{};
