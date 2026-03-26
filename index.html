@@ -240,14 +240,26 @@
           </select>
           <select id="filter-category" onchange="renderExpenses()">
             <option value="">Semua kategori</option>
-            <option value="transport">Transport</option>
-            <option value="makan">Makan & Minum</option>
-            <option value="tiket">Tiket & Wisata</option>
-            <option value="penginapan">Penginapan</option>
-            <option value="belanja">Belanja</option>
-            <option value="lainnya">Lainnya</option>
+            <option value="transport">🚗 Transport</option>
+            <option value="makan">🍜 Makan & Minum</option>
+            <option value="tiket">🎟 Tiket</option>
+            <option value="penginapan">🏨 Penginapan</option>
+            <option value="wisata">🏄 Wisata</option>
+            <option value="belanja">🛍 Belanja</option>
+            <option value="lainnya">📦 Lainnya</option>
           </select>
           <button class="btn-outline" onclick="exportData()">↓ Export</button>
+        </div>
+
+        <!-- Summary total -->
+        <div class="section-card" style="border-left:4px solid var(--blush)">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-light);margin-bottom:4px">Total Keseluruhan</div>
+              <div id="exp-grand-total" style="font-family:var(--font-display);font-size:1.8rem;font-weight:600;color:var(--text-dark)">Rp 0</div>
+            </div>
+            <div style="font-size:2rem">💸</div>
+          </div>
         </div>
 
         <!-- Summary per person -->
@@ -285,15 +297,35 @@
             <div class="stat-label">Sisa Kas</div>
             <div class="stat-value" id="dep-remain">Rp 0</div>
           </div>
+          <div class="stat-card stat-progress">
+            <div class="stat-label">Jumlah Anggota</div>
+            <div class="stat-value" id="dep-member-count">0</div>
+          </div>
         </div>
 
         <div class="section-card">
-          <h3>Saldo per Anggota</h3>
-          <div id="dep-per-member" class="summary-grid"></div>
+          <div class="section-header">
+            <h3>Saldo per Anggota</h3>
+            <span style="font-size:0.75rem;color:var(--text-light)">Deposit − Pengeluaran</span>
+          </div>
+          <div id="dep-per-member" class="dep-per-member-grid"></div>
+        </div>
+
+        <!-- Siapa Nombok / Surplus -->
+        <div class="section-card">
+          <h3>Status Anggota</h3>
+          <div id="dep-status-list" class="dep-status-list"></div>
+        </div>
+
+        <!-- Settlement -->
+        <div class="section-card">
+          <h3>Rekomendasi Pelunasan</h3>
+          <p style="font-size:0.8rem;color:var(--text-light);margin-bottom:12px">Anggota yang memiliki saldo negatif disarankan untuk membayar kepada anggota yang memiliki saldo positif.</p>
+          <div id="dep-settlement-list" class="settlement-list"></div>
         </div>
 
         <div class="section-card">
-          <h3>Deposit per Anggota</h3>
+          <h3>Riwayat Deposit</h3>
           <div id="deposit-list" class="deposit-list"></div>
         </div>
       </div>
@@ -316,6 +348,15 @@
           <select id="filter-pack-member" onchange="renderPacking()">
             <option value="">Semua anggota</option>
           </select>
+          <select id="filter-pack-category" onchange="renderPacking()">
+            <option value="">Semua kategori</option>
+            <option value="pakaian">👕 Pakaian</option>
+            <option value="toiletries">🧴 Toiletries</option>
+            <option value="dokumen">📄 Dokumen</option>
+            <option value="elektronik">🔌 Elektronik</option>
+            <option value="obat">💊 Obat-obatan</option>
+            <option value="lainnya">📦 Lainnya</option>
+          </select>
         </div>
         <div id="packing-list" class="packing-items"></div>
       </div>
@@ -324,7 +365,19 @@
       <div id="tab-docs" class="tab-content hidden">
         <div class="page-header">
           <h2 class="page-title">Dokumentasi</h2>
-          <button class="btn-primary" onclick="openDocsModal()">+ Foto/Dokumen</button>
+          <button class="btn-primary" onclick="openDocsModal()">+ Foto</button>
+        </div>
+        <div class="filter-bar" style="margin-bottom:16px">
+          <select id="filter-doc-category" onchange="renderDocs()">
+            <option value="">Semua kategori</option>
+            <option value="pantai">🏖 Pantai</option>
+            <option value="kuliner">🍜 Kuliner</option>
+            <option value="wisata">🏛 Wisata</option>
+            <option value="hotel">🏨 Hotel</option>
+            <option value="transport">🚗 Transport</option>
+            <option value="lainnya">📦 Lainnya</option>
+          </select>
+          <span id="docs-count" style="font-size:0.8rem;color:var(--text-light);align-self:center;white-space:nowrap">0 foto</span>
         </div>
         <div id="docs-grid" class="docs-grid"></div>
       </div>
@@ -439,16 +492,16 @@
           <div class="form-group">
             <label>Priority</label>
             <select id="itin-priority">
-              <option value="normal">Normal</option>
-              <option value="must">Must Do ⭐</option>
-              <option value="optional">Optional</option>
+              <option value="high">🔴 High Priority</option>
+              <option value="medium" selected>🟡 Medium Priority</option>
+              <option value="low">🟢 Low Priority</option>
             </select>
           </div>
           <div class="form-group">
             <label>Status</label>
             <select id="itin-status">
-              <option value="pending">Belum selesai</option>
-              <option value="done">Selesai ✓</option>
+              <option value="planned">📋 Planned</option>
+              <option value="done">✅ Done</option>
             </select>
           </div>
         </div>
@@ -481,8 +534,9 @@
             <select id="exp-category">
               <option value="transport">🚗 Transport</option>
               <option value="makan">🍜 Makan & Minum</option>
-              <option value="tiket">🎟 Tiket & Wisata</option>
+              <option value="tiket">🎟 Tiket</option>
               <option value="penginapan">🏨 Penginapan</option>
+              <option value="wisata">🏄 Wisata</option>
               <option value="belanja">🛍 Belanja</option>
               <option value="lainnya">📦 Lainnya</option>
             </select>
