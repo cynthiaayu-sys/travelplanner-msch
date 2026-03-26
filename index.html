@@ -223,6 +223,7 @@
             <div class="progress-bar" id="itin-progress-bar" style="width:0%"></div>
           </div>
         </div>
+        <div id="itin-budget-summary" class="itin-budget-summary hidden"></div>
         <div id="itinerary-list" class="itinerary-list"></div>
       </div>
 
@@ -505,6 +506,16 @@
             </select>
           </div>
         </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Estimasi Biaya (Rp)</label>
+            <input type="number" id="itin-budget-est" placeholder="0" min="0" />
+          </div>
+          <div class="form-group">
+            <label>Biaya Aktual (Rp)</label>
+            <input type="number" id="itin-budget-actual" placeholder="0" min="0" />
+          </div>
+        </div>
         <div class="form-group">
           <label>Catatan</label>
           <textarea id="itin-notes" placeholder="Catatan tambahan..." rows="2"></textarea>
@@ -680,16 +691,17 @@
     </div>
   </div>
 
-  <!-- Add Guest Member Modal -->
+  <!-- Add/Edit Guest Member Modal -->
   <div id="add-member-modal" class="modal hidden">
     <div class="modal-overlay" onclick="closeModal('add-member-modal')"></div>
     <div class="modal-box">
       <div class="modal-header">
-        <h3>Tambah Anggota</h3>
+        <h3 id="member-modal-title">Tambah Anggota</h3>
         <button class="modal-close" onclick="closeModal('add-member-modal')">✕</button>
       </div>
       <div class="modal-body">
-        <p style="font-size:0.85rem;color:var(--text-light);margin-bottom:16px">Tambah anggota trip tanpa perlu login. Anggota ini bisa dipakai untuk pencatatan expense, packing, dll.</p>
+        <p style="font-size:0.85rem;color:var(--text-light);margin-bottom:16px">Tambah atau edit anggota trip. Anggota ini bisa dipakai untuk pencatatan expense, packing, dll.</p>
+        <input type="hidden" id="member-edit-uid" />
         <div class="form-group">
           <label>Nama Lengkap <span style="color:var(--danger)">*</span></label>
           <input type="text" id="guest-name" placeholder="Contoh: Budi Santoso" />
@@ -698,7 +710,7 @@
           <label>Peran / Keterangan (opsional)</label>
           <input type="text" id="guest-role" placeholder="Contoh: Supir, Guide, dll" />
         </div>
-        <button class="btn-primary" onclick="addGuestMember()">Tambah Anggota</button>
+        <button class="btn-primary" onclick="saveGuestMember()">Simpan Anggota</button>
       </div>
     </div>
   </div>
