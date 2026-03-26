@@ -1213,7 +1213,64 @@ select {
   .stat-value { font-size: 1.2rem; }
 }
 
-/* ---- NEW ADDITIONS ---- */
+/* ============ ITINERARY BUDGET ============ */
+.itin-budget-summary {
+  background: var(--warm-white);
+  border: 1px solid var(--cream-border);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.itin-budget-bar {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  divide: 1px solid var(--cream-border);
+}
+
+.itin-budget-item {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-right: 1px solid var(--cream-border);
+  text-align: center;
+}
+.itin-budget-item:last-child { border-right: none; }
+.itin-budget-item span { font-size: 0.72rem; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.4px; }
+.itin-budget-item strong { font-family: var(--font-display); font-size: 1rem; font-weight: 600; color: var(--text-dark); }
+
+.itin-day-budget {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 0.72rem;
+  color: var(--text-light);
+  font-weight: 400;
+  background: var(--cream-dark);
+  padding: 2px 8px;
+  border-radius: 99px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.itin-budget-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  margin-bottom: 2px;
+}
+
+.itin-budget-tag {
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-weight: 500;
+}
+.itin-budget-tag.est { background: #EEF5FB; color: #2980b9; }
+.itin-budget-tag.actual { background: #FFF3E8; color: #d35400; }
+.itin-budget-tag.diff { background: var(--cream-dark); }
 .today-group { border-left: 3px solid var(--gold); background: #FFFEF5; border-radius: var(--radius-sm); padding-left: 12px; }
 .today-badge { background: var(--gold); color: #fff; font-size: 0.7rem; padding: 2px 8px; border-radius: 99px; margin-left: 8px; }
 .itin-notes-text { font-size: 0.78rem; color: var(--text-light); margin-top: 4px; }
